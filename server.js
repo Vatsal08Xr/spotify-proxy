@@ -1,13 +1,18 @@
 const express = require('express');
-const fetch = require('node-fetch');
-
 const app = express();
 const port = process.env.PORT || 10000;
+
+// ✅ Add CORS headers
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  next();
+});
 
 app.get('/track/:id', async (req, res) => {
   try {
     const id = req.params.id;
-    // Validate ID (basic check)
     if (!/^[a-zA-Z0-9]+$/.test(id)) {
       return res.status(400).json({ error: 'Invalid track ID' });
     }
