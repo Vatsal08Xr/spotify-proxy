@@ -111,6 +111,35 @@ app.get('/search-spotify', async (req, res) => {
   }
 });
 
+// Route 4: Get YouTube video title
+app.get('/get-video-title', async (req, res) => {
+  try {
+    const { v } = req.query;
+    if (!v) return res.status(400).json({ error: 'Missing video ID' });
+    
+    const url = `https://www.youtube.com/watch?v=${v}`;
+    const response = await fetch(url);
+    const html = await response.text();
+    
+    // Extract title from HTML
+    const titleMatch = html.match(/<title>(.*?) - YouTube<\/title>/);
+    if (!titleMatch) {
+      return res.status(404).json({ error: 'Title not found' });
+    }
+    let title = titleMatch[1].trim();
+    
+    // Clean common suffixes
+    title = title.replace(/[\u2013\u2014-]\s*Official.*$/i, '');
+    title = title.replace(/\s*\([^)]*video[^)]*\)/i, '');
+    title = title.replace(/ audio$/i, '');
+    
+    res.json({ title });
+  } catch (err) {
+    console.error('Video title error:', err);
+    res.status(500).json({ error: 'Failed to get title' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`✅ Proxy running on port ${port}`);
 });
