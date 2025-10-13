@@ -111,31 +111,38 @@ app.get('/search-spotify', async (req, res) => {
   }
 });
 
-// Route 4: Get YouTube video title
+// Route 4: Get YouTube video title (improved)
 app.get('/get-video-title', async (req, res) => {
   try {
     const { v } = req.query;
     if (!v) return res.status(400).json({ error: 'Missing video ID' });
+
+    // Use oEmbed (public, reliable, no scraping)
+    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${v}&format=json`;
+    const response = await fetch(oembedUrl);
     
-    const url = `https://www.youtube.com/watch?v=${v}`;
-    const response = await fetch(url);
-    const html = await response.text();
-    
-    // Extract title from HTML
-    const titleMatch = html.match(/<title>(.*?) - YouTube<\/title>/);
-    if (!titleMatch) {
+    if (!response.ok) {
+      // Fallback to scraping if oEmbed fails
+      const htmlRes = await fetch(`https://www.youtube.com/watch?v=${v}`);
+      const html = await htmlRes.text();
+      const match = html.match(/"title":"([^"]+)"/);
+      if (match) {
+        let title = JSON.parse(`"${match[1]}"`); // decode escaped JSON string
+        title = title.replace(/\s*\([^)]*official[^)]*\)/i, '');
+        title = title.replace(/ audio$/i, '');
+        return res.json({ title });
+      }
       return res.status(404).json({ error: 'Title not found' });
     }
-    let title = titleMatch[1].trim();
-    
-    // Clean common suffixes
-    title = title.replace(/[\u2013\u2014-]\s*Official.*$/i, '');
-    title = title.replace(/\s*\([^)]*video[^)]*\)/i, '');
+
+    const data = await response.json();
+    let title = data.title;
+    title = title.replace(/\s*\([^)]*official[^)]*\)/i, '');
     title = title.replace(/ audio$/i, '');
-    
     res.json({ title });
+
   } catch (err) {
-    console.error('Video title error:', err);
+    console.error('Video title error:', err.message);
     res.status(500).json({ error: 'Failed to get title' });
   }
 });
