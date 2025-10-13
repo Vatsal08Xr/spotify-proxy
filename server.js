@@ -79,6 +79,38 @@ app.get('/search-youtube', async (req, res) => {
   }
 });
 
+// Route 3: Search Spotify by query (using your auth token)
+app.get('/search-spotify', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q) {
+      return res.status(400).json({ error: 'Missing query' });
+    }
+    const token = await getSpotifyToken();
+    const searchUrl = `https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=1`;
+    const response = await fetch(searchUrl, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!response.ok) {
+      return res.status(500).json({ error: 'Spotify search failed' });
+    }
+    const data = await response.json();
+    if (data.tracks.items.length === 0) {
+      return res.status(404).json({ error: 'No Spotify track found' });
+    }
+    const track = data.tracks.items[0];
+    res.json({
+      id: track.id,
+      name: track.name,
+      artist: track.artists[0].name,
+      url: track.external_urls.spotify
+    });
+  } catch (err) {
+    console.error('Spotify search error:', err);
+    res.status(500).json({ error: 'Search error' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`✅ Proxy running on port ${port}`);
 });
