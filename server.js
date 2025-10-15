@@ -147,6 +147,44 @@ app.get('/get-video-title', async (req, res) => {
   }
 });
 
+// GET /search-apple
+app.get('/search-apple', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q) return res.status(400).json({ error: 'Missing query' });
+    
+    // Search via Apple Music web (scrape JSON)
+    const searchUrl = `https://music.apple.com/search?term=${encodeURIComponent(q)}`;
+    const htmlRes = await fetch(searchUrl);
+    const html = await htmlRes.text();
+    
+    // Extract first song link
+    const match = html.match(/\/us\/album\/[^"']*?i=([0-9]+)/);
+    if (!match) {
+      return res.status(404).json({ error: 'No Apple Music match' });
+    }
+    const trackId = match[1];
+    const trackUrl = `https://music.apple.com/us/album/track?i=${trackId}`;
+    
+    // Get title/artist via /apple-track
+    const trackRes = await fetch(`${req.protocol}://${req.get('host')}/apple-track/${trackId}`);
+    if (!trackRes.ok) {
+      return res.status(404).json({ error: 'Track metadata not found' });
+    }
+    const trackData = await trackRes.json();
+    
+    res.json({
+      id: trackId,
+      name: trackData.name,
+      artist: trackData.artist,
+      url: trackData.url || trackUrl
+    });
+  } catch (err) {
+    console.error('Apple search error:', err.message);
+    res.status(500).json({ error: 'Apple search failed' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`✅ Proxy running on port ${port}`);
 });
