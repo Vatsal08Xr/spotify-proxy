@@ -147,7 +147,7 @@ app.get('/get-video-title', async (req, res) => {
   }
 });
 
-// NEW ROUTE: Get Apple Music track by ID
+// UPDATED: Get Apple Music track by ID - Improved artist detection
 app.get('/apple-track/:id', async (req, res) => {
   try {
     const trackId = req.params.id;
@@ -155,70 +155,158 @@ app.get('/apple-track/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid Apple Music track ID' });
     }
 
+    console.log(`Fetching Apple Music track: ${trackId}`);
+
     // Method 1: Try iTunes Lookup API first (most reliable)
     try {
-      const itunesResponse = await fetch(`https://itunes.apple.com/lookup?id=${trackId}`);
+      const itunesResponse = await fetch(`https://itunes.apple.com/lookup?id=${trackId}&country=US`);
       if (itunesResponse.ok) {
         const data = await itunesResponse.json();
+        console.log('iTunes Lookup response:', data);
+        
         if (data.results && data.results.length > 0) {
           const track = data.results[0];
-          return res.json({
-            id: trackId,
-            name: track.trackName,
-            artist: track.artistName,
-            url: track.trackViewUrl || `https://music.apple.com/us/song/${trackId}`
-          });
+          
+          // Validate that we have both track name and artist
+          if (track.trackName && track.artistName) {
+            return res.json({
+              id: trackId,
+              name: track.trackName,
+              artist: track.artistName,
+              url: track.trackViewUrl || `https://music.apple.com/us/song/${trackId}`
+            });
+          } else {
+            console.log('iTunes API missing track name or artist:', track);
+          }
+        } else {
+          console.log('iTunes API returned no results');
         }
+      } else {
+        console.log('iTunes API response not OK:', itunesResponse.status);
       }
     } catch (error) {
-      console.log('iTunes Lookup failed, trying web scraping...');
+      console.log('iTunes Lookup failed:', error.message);
     }
 
-    // Method 2: Fallback to web scraping
+    // Method 2: Try different countries if US fails
+    const countries = ['US', 'GB', 'CA', 'AU', 'DE'];
+    for (const country of countries) {
+      try {
+        const itunesResponse = await fetch(`https://itunes.apple.com/lookup?id=${trackId}&country=${country}`);
+        if (itunesResponse.ok) {
+          const data = await itunesResponse.json();
+          if (data.results && data.results.length > 0) {
+            const track = data.results[0];
+            if (track.trackName && track.artistName) {
+              console.log(`Found via ${country} iTunes API`);
+              return res.json({
+                id: trackId,
+                name: track.trackName,
+                artist: track.artistName,
+                url: track.trackViewUrl || `https://music.apple.com/${country.toLowerCase()}/song/${trackId}`
+              });
+            }
+          }
+        }
+      } catch (error) {
+        console.log(`iTunes API for ${country} failed:`, error.message);
+      }
+    }
+
+    // Method 3: Fallback to web scraping with better parsing
     try {
       const trackUrl = `https://music.apple.com/us/song/${trackId}`;
       const htmlRes = await fetch(trackUrl);
       const html = await htmlRes.text();
       
-      // Extract title and artist from meta tags
-      const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/);
-      const artistMatch = html.match(/<meta property="music:musician" content="([^"]+)"/);
+      console.log('Attempting web scraping for Apple Music track');
       
-      if (titleMatch && artistMatch) {
-        const title = titleMatch[1].split(' - ')[0]; // Remove artist from title if present
-        const artist = artistMatch[1].split('/').pop().replace(/-/g, ' '); // Extract artist name from URL
-        
+      // Multiple methods to extract title and artist
+      let title = null;
+      let artist = null;
+      
+      // Method 3a: Try JSON-LD structured data
+      const jsonLdMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+      if (jsonLdMatch) {
+        try {
+          const jsonLd = JSON.parse(jsonLdMatch[1]);
+          if (jsonLd.name) title = jsonLd.name;
+          if (jsonLd.byArtist && jsonLd.byArtist.name) artist = jsonLd.byArtist.name;
+        } catch (e) {
+          console.log('JSON-LD parsing failed');
+        }
+      }
+      
+      // Method 3b: Try meta tags
+      if (!title) {
+        const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/);
+        if (titleMatch) {
+          title = titleMatch[1].split(' - ')[0]; // Remove artist from title if present
+        }
+      }
+      
+      if (!artist) {
+        const artistMatch = html.match(/<meta property="music:musician" content="([^"]+)"/);
+        if (artistMatch) {
+          artist = artistMatch[1].split('/').pop().replace(/-/g, ' ');
+        }
+      }
+      
+      // Method 3c: Try other meta tags
+      if (!artist) {
+        const artistMatch2 = html.match(/<meta name="apple:artist" content="([^"]+)"/);
+        if (artistMatch2) {
+          artist = artistMatch2[1];
+        }
+      }
+      
+      // Method 3d: Try schema.org markup
+      if (!artist) {
+        const schemaMatch = html.match(/"name":"([^"]+)","@type":"MusicGroup"/);
+        if (schemaMatch) {
+          artist = schemaMatch[1];
+        }
+      }
+      
+      if (title && artist) {
+        console.log('Found via web scraping:', { title, artist });
         return res.json({
           id: trackId,
           name: title,
           artist: artist,
           url: trackUrl
         });
+      } else {
+        console.log('Web scraping failed to find complete data:', { title, artist });
       }
     } catch (error) {
-      console.log('Web scraping also failed');
+      console.log('Web scraping also failed:', error.message);
     }
 
-    // Method 3: Final fallback - use iTunes search
+    // Method 4: Final fallback - use iTunes search
     try {
-      const searchResponse = await fetch(`https://itunes.apple.com/search?term=${trackId}&entity=song&limit=1`);
+      const searchResponse = await fetch(`https://itunes.apple.com/search?term=${trackId}&entity=song&limit=1&country=US`);
       if (searchResponse.ok) {
         const data = await searchResponse.json();
         if (data.results && data.results.length > 0) {
           const track = data.results[0];
-          return res.json({
-            id: trackId,
-            name: track.trackName,
-            artist: track.artistName,
-            url: track.trackViewUrl
-          });
+          if (track.trackName && track.artistName) {
+            console.log('Found via iTunes search');
+            return res.json({
+              id: trackId,
+              name: track.trackName,
+              artist: track.artistName,
+              url: track.trackViewUrl
+            });
+          }
         }
       }
     } catch (error) {
-      console.log('iTunes search failed');
+      console.log('iTunes search failed:', error.message);
     }
 
-    return res.status(404).json({ error: 'Apple Music track not found' });
+    console.log('All methods failed for track:', trackId);
+    return res.status(404).json({ error: 'Apple Music track not found or incomplete data' });
 
   } catch (err) {
     console.error('Apple Music track error:', err.message);
@@ -232,8 +320,10 @@ app.get('/search-apple', async (req, res) => {
     const { q } = req.query;
     if (!q) return res.status(400).json({ error: 'Missing query' });
     
+    console.log('Searching Apple Music for:', q);
+    
     // Use iTunes Search API (more reliable than scraping)
-    const searchUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=1&media=music`;
+    const searchUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=1&media=music&country=US`;
     const response = await fetch(searchUrl);
     
     if (!response.ok) {
@@ -241,14 +331,23 @@ app.get('/search-apple', async (req, res) => {
     }
     
     const data = await response.json();
+    console.log('Apple Music search results:', data);
+    
     if (data.results && data.results.length > 0) {
       const track = data.results[0];
-      return res.json({
-        id: track.trackId,
-        name: track.trackName,
-        artist: track.artistName,
-        url: track.trackViewUrl
-      });
+      
+      // Validate we have both track name and artist
+      if (track.trackName && track.artistName) {
+        return res.json({
+          id: track.trackId,
+          name: track.trackName,
+          artist: track.artistName,
+          url: track.trackViewUrl
+        });
+      } else {
+        console.log('Search result missing data:', track);
+        return res.status(404).json({ error: 'Incomplete track data found' });
+      }
     }
     
     return res.status(404).json({ error: 'No Apple Music match found' });
